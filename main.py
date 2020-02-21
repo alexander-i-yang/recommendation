@@ -1,42 +1,47 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
+from flask import Flask
+import jinja2
+import os
+from google.cloud import datastore
+import tensorflow
 
-import math
+datastore_client = datastore.Client()
 
-import pandas as pd
-import numpy as np
-import warnings
-warnings.filterwarnings('ignore')
+def store_time(dt):
+    entity = datastore.Entity(key=datastore_client.key('visit'))
+    entity.update({
+        'timestamp': dt
+    })
 
-CHUNKSIZE = 500000
-
-def debug_recommend(thingy):
-    return "Hello: " + str(thingy)
-
-
-def preprocess_rating_chunk(chunk):
-    chunk[['userId', 'movieId', 'timestamp']] = chunk[['userId', 'movieId', 'timestamp']].astype('int32')
-    chunk[['rating']] = chunk[['rating']].astype('float32')
-    chunk_pivot = chunk.pivot(index='movieId', columns='userId', values='rating')
-    for index, row in chunk_pivot.iterrows():
-        print(list(zip(row,row.index)))
-        #row = [(index, i) if not math.isnan(i) else pass for i in row]
-        #for i in row:
-        #    print("ree: ", i)
-    return chunk
+    datastore_client.put(entity)
 
 
-print("Reading data...")
-raw_rating_chunks = pd.read_csv('ml-25m/ratings.csv', chunksize=CHUNKSIZE)
-raw_movie_chunks = pd.read_csv('ml-25m/movies.csv', chunksize=CHUNKSIZE)
-raw_genome_scores = pd.read_csv('ml-25m/genome-scores.csv', chunksize=CHUNKSIZE)
-raw_genome_tags = pd.read_csv('ml-25m/genome-tags.csv', chunksize=CHUNKSIZE)
+def fetch_times(limit):
+    query = datastore_client.query(kind='visit')
+    query.order = ['-timestamp']
 
-i = 0
+    times = query.fetch(limit=limit)
 
-print("Preprocessing raw rating chunks")
-for raw_chunk in raw_rating_chunks:
-    preprocessed_chunk = preprocess_rating_chunk(raw_chunk)
-    if i == 0: preprocessed_ratings = preprocessed_chunk
-    i += 1
-    print(i)
-    preprocessed_ratings = pd.merge(preprocessed_ratings, preprocessed_chunk, on="movieId")
+    return times
+
+JINJA_ENVIRONMENT = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(os.path.dirname(__file__)),
+    extensions=['jinja2.ext.autoescape'])
+
+# If `entrypoint` is not defined in app.yaml, App Engine will look for an app
+# called `app` in `main.py`.
+app = Flask(__name__)
+
+
+@app.route("/", methods=["GET"])
+def hello():
+    """Return a friendly HTTP greeting."""
+    template = JINJA_ENVIRONMENT.get_template('templates/index.html')
+    template_vals = {"times": fetch_times(10)}
+    return template.render(template_vals)
+
+
+if __name__ == "__main__":
+    # This is used when running locally only. When deploying to Google App
+    # Engine, a webserver process such as Gunicorn will serve the app. This
+    # can be configured by adding an `entrypoint` to app.yaml.
+    app.run(host="127.0.0.1", port=8080, debug=True)
