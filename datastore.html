@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+<h2>Last 10 visits</h2>
+{% for movie in movies %}  <p>{{movie['name']}} {{movie['rating']}} {{movie['tags']}}</p>
+{% endfor %}
+</body>
+</html>
