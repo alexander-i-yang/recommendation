@@ -7,7 +7,7 @@ import tensorflow
 datastore_client = datastore.Client()
 
 def store_time(dt):
-    entity = datastore.Entity(key=datastore_client.key('visit'))
+    entity = datastore.Entity(key=datastore_client.key('times'))
     entity.update({
         'timestamp': dt
     })
@@ -16,8 +16,8 @@ def store_time(dt):
 
 
 def fetch_times(limit):
-    query = datastore_client.query(kind='visit')
-    query.order = ['-timestamp']
+    query = datastore_client.query(kind='movie')
+    query.order = ['-movieId']
 
     times = query.fetch(limit=limit)
 
@@ -37,6 +37,8 @@ def hello():
     """Return a friendly HTTP greeting."""
     template = JINJA_ENVIRONMENT.get_template('templates/index.html')
     template_vals = {"times": fetch_times(10)}
+    for i in fetch_times(10):
+        print(i)
     return template.render(template_vals)
 
 
