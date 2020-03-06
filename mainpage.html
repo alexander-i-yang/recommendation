@@ -1,0 +1,21 @@
+{% extends "/templates/index.html" %}
+{% block content %}
+<div class="section">
+    <h3 class="section-title">Recent</h3>
+    <div class="questions-con">
+      {% for x in questions %}
+        <div class="question">
+          <div class="votes">
+            <img src="/static/Upvote.svg">
+            <span>{{x['score']}}</span>
+            <img src="/static/Downvote.svg">
+          </div>
+          <div class="body">
+            <h3><a href={{x['link']}}>{{x['title']}}</a></h3>
+            <div class="body-text">{{x['body']}}</div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}
