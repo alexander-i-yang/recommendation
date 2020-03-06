@@ -1,35 +1,56 @@
 import math
 import re
 import sys
-from datetime import time
+import time
 
 from flask import Flask
 import jinja2
 import os
 import pandas as pd
-from google.cloud import datastore as db
+from google.cloud import ndb
 import tensorflow
 
-datastore_client = db.Client()
-CHUNKSIZE = 50000
+datastore_client = ndb.Client()
+CHUNKSIZE = 25000
 NUMCHUNKS = 500
 
 
+class Movie(ndb.Model):
+    movieId = ndb.IntegerProperty()
+    title = ndb.StringProperty()
+    genres = ndb.StringProperty()
+    year = ndb.IntegerProperty()
+    rating = ndb.FloatProperty()
+
+
+# TODO: make this function ndb compatible.
 def store_movie(movieId, title, genres, year, rating):
-    entity = db.Entity(key=datastore_client.key('movie'))
-    entity.update({
-        'movieId': movieId,
-        'title': title,
-        'genres': genres,
-        'year': year,
-        'rating': rating,
-    })
-    datastore_client.put(entity)
+    with datastore_client.context():
+        test = Movie(movieId=movieId, title=title, genres=genres, year=year, rating=rating)
+        test.put()
+        # print([c.title for c in Movie.query()])
 
 
 def store_movies(dataframe):
+    sys.stdout.write("├─%s─┼" % "Storing in database────────────")
+    sys.stdout.flush()
+    num_rows = len(dataframe.index)
+    index = 0
+    cur_percent = 0.1
     for i, row in dataframe.iterrows():
-        store_movie(row.movieId, row.title, row.genres, row.year, row.rating)
+        if float(index)/num_rows > cur_percent:
+            cur_percent += 0.1
+            sys.stdout.write("═")
+            sys.stdout.flush()
+        store_movie(
+            movieId=row.movieId,
+            title=row.title,
+            genres=row.genres,
+            year=row.year,
+            rating=row.rating
+        )
+        index += 1
+    print("┤")
 
 
 def fetch_movies(limit):
@@ -85,16 +106,10 @@ def preprocess_avg_rating_chunk(chunk):
 
 def preprocess_genome_chunk(chunk):
     ret = pd.DataFrame({'tags': [0]})
-    print("sliced")
     for key, item in chunk.groupby(['movieId']):
-        print(item.nlargest(5, 'relevance'))
         ret[key] = item.nlargest(5, 'relevance')
-    print(ret)
     ret.drop("movieId")
-    print("recent: ")
-    print(ret)
     ret = ret.reset_index().set_index('movieId').drop('level_1', axis=1)
-    print(ret)
     return ret
 
 
@@ -132,11 +147,10 @@ def process_genome_merged(merged_dataset, debug=False):
 def preprocess_movie_chunk(chunk):
     def find_parens(st):
         ret = st[st.find("(") + 1:st.find(")")]
-        return ret if str.isdigit(ret) else 0
-
+        return int(ret) if str.isdigit(ret) else 0
     chunk['year'] = chunk["title"].apply(find_parens)
-    chunk['title'] = chunk['title'].apply(lambda x: re.sub(r"\(.*\)", "", x))
-    chunk['genres'] = chunk['genres'].apply(lambda x: [] if x == "(no genres listed)" else x.split("|"))
+    chunk['title'] = chunk['title'].apply(lambda x: re.sub(r"\(.*\)", "", x)[:-1])
+    chunk['genres'] = chunk['genres'].apply(lambda x: "[]" if x == "(no genres listed)" else str(x.split("|")))
     return chunk
 
 
@@ -151,13 +165,16 @@ def process_chunk(
         merge_func,
         msg="",
         debug=False,
-        final_process=lambda x: x):
+        final_process=lambda x: x,
+        limit=-1,
+):
     i = 0
     cur_percent = 0.1
     merged_dataset = pd.DataFrame()
     sys.stdout.write("├─%s─┼" % msg)
     sys.stdout.flush()
     if debug: print()
+    numchunks = min(numchunks, limit)
     for raw_chunk in chunks:
         processed_chunk = chunk_func(raw_chunk)
         if debug:
@@ -178,18 +195,18 @@ def process_chunk(
                 print("Merged dataset:")
                 print(merged_dataset)
                 print(merged_dataset.describe())
-        while (i + 1) / float(numchunks) > cur_percent:
+        while (i+1) / float(numchunks) > cur_percent and cur_percent < 1:
             cur_percent += 0.1
             sys.stdout.write("═")
             sys.stdout.flush()
-        if debug and i == 2:
+        if i > limit != -1:
             break
         i += 1
     print("┤")
     return final_process(merged_dataset)
 
 
-def store_all_data(debug=False):
+def store_all_data(debug=False, limit=-1):
     print("Reading data...")
     print("Done.")
     print("\nProcessing data...")
@@ -208,6 +225,7 @@ def store_all_data(debug=False):
         merge_func=merge_rating_chunk,
         msg="Preprocessing raw rating chunks",
         debug=debug,
+        limit=limit,
     )
     preprocessed_movies = process_chunk(
         chunks=raw_movie_chunks,
@@ -215,38 +233,20 @@ def store_all_data(debug=False):
         chunk_func=preprocess_movie_chunk,
         merge_func=merge_movie_chunk,
         msg="Preprocessing raw movie chunks─",
-        debug=debug
+        debug=debug,
+        limit=limit,
     )
-    print("└─────────────────────────────────┴──────────┘")
     if debug:
         print("Ratings Dataframe:")
         print(preprocessed_ratings)
         print("Movie Dataframe:")
         print(preprocessed_movies)
     preprocessed_dataframe = preprocessed_movies.merge(preprocessed_ratings, on='movieId')
-    print("storing this data:")
-    print(preprocessed_dataframe)
+    # print(len(preprocessed_dataframe.index))
     store_movies(preprocessed_dataframe)
-
-
-def delete_all_movies():
-    # response = input("About to delete all movies. Continue? (Y/N) ")
-    response = "Y"
-    if response == "N":
-        return
-    else:
-        while True:
-            query = datastore_client.query(kind='movie')
-            movies = query.fetch(limit=200)
-            print(datastore_client.key('movie'))
-            # datastore_client.delete()
-            for i in movies:
-                print(i)
-            time.sleep(0.5)
-
+    print("└─────────────────────────────────┴──────────┘")
 
 
 if __name__ == "__main__":
-    store_all_data(debug=False)
-    # delete_all_movies()
-    app.run(host="127.0.0.1", port=8080, debug=True)
+    store_all_data(debug=False, limit=1)
+    # app.run(host="127.0.0.1", port=8080, debug=True)
